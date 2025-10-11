@@ -1,0 +1,13 @@
+{
+  "name": "pharmacy-backend",
+  "version": "1.0.0",
+  "description": "Al Naeima Pharmacy Backend API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": ["pharmacy", "medical", "inventory"],
+  "author": "Al Naeima Pharmacy",
+  "license": "ISC"
+}
