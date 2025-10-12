@@ -17,6 +17,7 @@ const salesRoutes = require('./routes/sales');
 const supplierRoutes = require('./routes/suppliers');
 const paymentRoutes = require('./routes/payments');
 const userRoutes = require('./routes/users');
+const { router: authRoutes } = require('./routes/auth');
 
 // Use routes
 app.use('/api/medicines', medicineRoutes);
@@ -25,6 +26,7 @@ app.use('/api/sales', salesRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/auth', authRoutes);
 
 // Health check endpoint
 app.get('/', (req, res) => {
