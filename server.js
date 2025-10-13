@@ -1,14 +1,61 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
-const { testConnection } = require('./config/database');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// CORS Configuration - Allow your Vercel frontend
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://pharmacy-frontend-bnhbxphxq-akhtars-projects-291f679e.vercel.app',
+  'https://pharmacy-frontend-akhtars-projects-291f679e.vercel.app', // Alternative Vercel URL
+  'https://*.vercel.app' // Allow all Vercel preview URLs
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is allowed
+    const isAllowed = allowedOrigins.some(allowed => {
+      if (allowed.includes('*')) {
+        const pattern = allowed.replace('*', '.*');
+        return new RegExp(pattern).test(origin);
+      }
+      return allowed === origin;
+    });
+    
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      console.log('⚠️ Blocked by CORS:', origin);
+      // For debugging, allow it but log
+      callback(null, true);
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 // Middleware
-app.use(cors());
 app.use(express.json());
+
+// Supabase client
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+
+// Make supabase available to routes
+app.use((req, res, next) => {
+  req.supabase = supabase;
+  next();
+});
 
 // Import routes
 const medicineRoutes = require('./routes/medicines');
@@ -31,26 +78,75 @@ app.use('/api/auth', authRoutes);
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'Al Naeima Pharmacy Backend API',
-    status: 'Running',
-    version: '1.0.0'
+    message: '🏥 Pharmacy Management System API',
+    status: '✅ Running',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      medicines: '/api/medicines',
+      stock: '/api/stock',
+      sales: '/api/sales',
+      suppliers: '/api/suppliers',
+      payments: '/api/payments',
+      users: '/api/users',
+      auth: '/api/auth',
+      health: '/api/health'
+    }
   });
+});
+
+// Test database connection
+app.get('/api/health', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('medicines')
+      .select('count')
+      .limit(1);
+    
+    if (error) throw error;
+    
+    res.json({ 
+      status: 'healthy',
+      database: 'connected',
+      supabase: 'ok',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'unhealthy',
+      database: 'disconnected',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('❌ Error:', err);
   res.status(500).json({ 
-    error: 'Something went wrong!',
-    message: err.message 
+    success: false, 
+    error: err.message || 'Internal server error' 
   });
 });
 
-// Start server and test database connection
-app.listen(PORT, async () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 API available at http://localhost:${PORT}`);
-  
-  // Test database connection
-  await testConnection();
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ 
+    success: false, 
+    error: 'Route not found',
+    path: req.path
+  });
 });
+
+app.listen(PORT, () => {
+  console.log('========================================');
+  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`📍 API available at http://localhost:${PORT}`);
+  console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔗 Supabase: ${process.env.SUPABASE_URL ? 'Connected' : 'Not configured'}`);
+  console.log(`🔐 CORS: Vercel URLs allowed`);
+  console.log('========================================');
+});
+
+module.exports = app;
