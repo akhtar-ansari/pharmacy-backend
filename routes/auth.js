@@ -215,7 +215,7 @@ router.get('/', verifyToken, isAdmin, async (req, res) => {
 });
 
 // CREATE NEW USER
-router.post('/', async (req, res) => {
+router.post('/', verifyToken, isAdmin, async (req, res) => {
   console.log('========================================');
   console.log('📥 CREATE USER REQUEST RECEIVED');
   console.log('📦 Request Body:', req.body);
