@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { supabase } = require('../config/database');
+const { verifyToken } = require('./auth');
+
+// Apply verifyToken middleware to all routes
+router.use(verifyToken);
 
 // ==========================================
 // INVOICE MANAGEMENT APIs
@@ -23,7 +27,7 @@ router.post('/invoices', async (req, res) => {
       return sum + (parseFloat(item.quantity) * parseFloat(item.purchase_price));
     }, 0);
 
-    // Step 1: Create invoice header
+    // Step 1: Create invoice header with client_id
     const { data: invoice, error: invoiceError } = await supabase
       .from('stock_invoices')
       .insert({
@@ -32,14 +36,15 @@ router.post('/invoices', async (req, res) => {
         invoice_date,
         invoice_amount,
         payment_status: payment_status || 'pending',
-        notes: notes || ''
+        notes: notes || '',
+        client_id: req.clientId
       })
       .select()
       .single();
 
     if (invoiceError) throw invoiceError;
 
-    // Step 2: Prepare items for insertion
+    // Step 2: Prepare items for insertion with client_id
     const itemsWithInvoiceId = items.map(item => ({
       invoice_id: invoice.id,
       medicine_id: item.medicine_id,
@@ -47,7 +52,8 @@ router.post('/invoices', async (req, res) => {
       batch_number: item.batch_number || '',
       expiry_date: item.expiry_date || null,
       purchase_price: parseFloat(item.purchase_price || 0),
-      line_total: parseInt(item.quantity) * parseFloat(item.purchase_price || 0)
+      line_total: parseInt(item.quantity) * parseFloat(item.purchase_price || 0),
+      client_id: req.clientId
     }));
 
     // Step 3: Insert all invoice items
@@ -58,7 +64,7 @@ router.post('/invoices', async (req, res) => {
 
     if (itemsError) throw itemsError;
 
-    // Step 4: Update stock table for each item
+    // Step 4: Update stock table for each item with client_id
     for (const item of itemsWithInvoiceId) {
       const { error: stockError } = await supabase
         .from('stock')
@@ -69,7 +75,8 @@ router.post('/invoices', async (req, res) => {
           expiry_date: item.expiry_date,
           purchase_price: item.purchase_price,
           mrp: 0,
-          invoice_id: invoice.id
+          invoice_id: invoice.id,
+          client_id: req.clientId
         });
 
       if (stockError) throw stockError;
@@ -93,7 +100,7 @@ router.post('/invoices', async (req, res) => {
   }
 });
 
-// GET ALL INVOICES
+// GET ALL INVOICES (filtered by client_id)
 router.get('/invoices', async (req, res) => {
   try {
     const { data: invoices, error } = await supabase
@@ -106,6 +113,7 @@ router.get('/invoices', async (req, res) => {
           company
         )
       `)
+      .eq('client_id', req.clientId)
       .order('invoice_date', { ascending: false });
 
     if (error) throw error;
@@ -116,7 +124,8 @@ router.get('/invoices', async (req, res) => {
         const { count } = await supabase
           .from('stock_invoice_items')
           .select('*', { count: 'exact', head: true })
-          .eq('invoice_id', invoice.id);
+          .eq('invoice_id', invoice.id)
+          .eq('client_id', req.clientId);
 
         return {
           ...invoice,
@@ -140,7 +149,7 @@ router.get('/invoices', async (req, res) => {
   }
 });
 
-// GET SINGLE INVOICE WITH ITEMS
+// GET SINGLE INVOICE WITH ITEMS (filtered by client_id)
 router.get('/invoices/:id', async (req, res) => {
   const { id } = req.params;
 
@@ -159,6 +168,7 @@ router.get('/invoices/:id', async (req, res) => {
         )
       `)
       .eq('id', id)
+      .eq('client_id', req.clientId)
       .single();
 
     if (invoiceError) throw invoiceError;
@@ -175,7 +185,8 @@ router.get('/invoices/:id', async (req, res) => {
           category
         )
       `)
-      .eq('invoice_id', id);
+      .eq('invoice_id', id)
+      .eq('client_id', req.clientId);
 
     if (itemsError) throw itemsError;
 
@@ -196,7 +207,7 @@ router.get('/invoices/:id', async (req, res) => {
   }
 });
 
-// UPDATE INVOICE
+// UPDATE INVOICE (filtered by client_id)
 router.put('/invoices/:id', async (req, res) => {
   const { id } = req.params;
   const { payment_status, notes } = req.body;
@@ -210,6 +221,7 @@ router.put('/invoices/:id', async (req, res) => {
         updated_at: new Date().toISOString()
       })
       .eq('id', id)
+      .eq('client_id', req.clientId)
       .select()
       .single();
 
@@ -230,30 +242,50 @@ router.put('/invoices/:id', async (req, res) => {
   }
 });
 
-// DELETE INVOICE
+// DELETE INVOICE (filtered by client_id)
 router.delete('/invoices/:id', async (req, res) => {
   const { id } = req.params;
 
   try {
-    // Step 1: Get all items to remove from stock
-    const { data: items } = await supabase
-      .from('stock_invoice_items')
-      .select('*')
-      .eq('invoice_id', id);
+    // Step 1: Verify invoice belongs to client
+    const { data: invoice } = await supabase
+      .from('stock_invoices')
+      .select('id')
+      .eq('id', id)
+      .eq('client_id', req.clientId)
+      .single();
+
+    if (!invoice) {
+      return res.status(404).json({
+        success: false,
+        error: 'Invoice not found'
+      });
+    }
 
     // Step 2: Delete stock entries
     const { error: stockError } = await supabase
       .from('stock')
       .delete()
-      .eq('invoice_id', id);
+      .eq('invoice_id', id)
+      .eq('client_id', req.clientId);
 
     if (stockError) throw stockError;
 
-    // Step 3: Delete invoice (items auto-delete via CASCADE)
+    // Step 3: Delete invoice items
+    const { error: itemsError } = await supabase
+      .from('stock_invoice_items')
+      .delete()
+      .eq('invoice_id', id)
+      .eq('client_id', req.clientId);
+
+    if (itemsError) throw itemsError;
+
+    // Step 4: Delete invoice
     const { error: invoiceError } = await supabase
       .from('stock_invoices')
       .delete()
-      .eq('id', id);
+      .eq('id', id)
+      .eq('client_id', req.clientId);
 
     if (invoiceError) throw invoiceError;
 
@@ -275,7 +307,7 @@ router.delete('/invoices/:id', async (req, res) => {
 // LEGACY APIs (Keep for backward compatibility)
 // ==========================================
 
-// Get all stock
+// Get all stock (filtered by client_id)
 router.get('/', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -289,6 +321,7 @@ router.get('/', async (req, res) => {
           category
         )
       `)
+      .eq('client_id', req.clientId)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
@@ -308,12 +341,17 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Add single stock entry (legacy)
+// Add single stock entry (legacy) with client_id
 router.post('/', async (req, res) => {
   try {
+    const stockData = {
+      ...req.body,
+      client_id: req.clientId
+    };
+
     const { data, error } = await supabase
       .from('stock')
-      .insert(req.body)
+      .insert(stockData)
       .select()
       .single();
 
@@ -334,7 +372,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Update stock
+// Update stock (filtered by client_id)
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
 
@@ -343,6 +381,7 @@ router.put('/:id', async (req, res) => {
       .from('stock')
       .update(req.body)
       .eq('id', id)
+      .eq('client_id', req.clientId)
       .select()
       .single();
 
@@ -363,7 +402,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Delete stock
+// Delete stock (filtered by client_id)
 router.delete('/:id', async (req, res) => {
   const { id } = req.params;
 
@@ -371,7 +410,8 @@ router.delete('/:id', async (req, res) => {
     const { error } = await supabase
       .from('stock')
       .delete()
-      .eq('id', id);
+      .eq('id', id)
+      .eq('client_id', req.clientId);
 
     if (error) throw error;
 
