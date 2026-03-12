@@ -1,8 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { supabase } = require('../config/database');
+const { verifyToken } = require('./auth');
 
-// GET all sales
+// Apply verifyToken middleware to all routes
+router.use(verifyToken);
+
+// GET all sales (filtered by client_id)
 router.get('/', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -17,6 +21,7 @@ router.get('/', async (req, res) => {
           )
         )
       `)
+      .eq('client_id', req.clientId)
       .order('id', { ascending: false });
 
     if (error) throw error;
@@ -34,7 +39,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET single sale by ID
+// GET single sale by ID (filtered by client_id)
 router.get('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -51,6 +56,7 @@ router.get('/:id', async (req, res) => {
         )
       `)
       .eq('id', req.params.id)
+      .eq('client_id', req.clientId)
       .single();
 
     if (error) throw error;
@@ -74,26 +80,26 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST create new sale (with items)
-// POST create new sale (with items)
+// POST create new sale (with items and client_id)
 router.post('/', async (req, res) => {
   try {
     const { items, ...saleData } = req.body;
 
-    // Insert sale
+    // Insert sale with client_id
     const { data: sale, error: saleError } = await supabase
       .from('sales')
-      .insert([saleData])
+      .insert([{ ...saleData, client_id: req.clientId }])
       .select()
       .single();
 
     if (saleError) throw saleError;
 
-    // Insert sale items
+    // Insert sale items with client_id
     if (items && items.length > 0) {
       const saleItems = items.map(item => ({
         ...item,
-        sale_id: sale.id
+        sale_id: sale.id,
+        client_id: req.clientId
       }));
 
       const { error: itemsError } = await supabase
@@ -102,14 +108,15 @@ router.post('/', async (req, res) => {
 
       if (itemsError) throw itemsError;
 
-      // Update stock quantities - FIXED VERSION
+      // Update stock quantities - filtered by client_id
       for (const item of items) {
-        // Get the stock item
+        // Get the stock item for this client
         const { data: stockItem, error: fetchError } = await supabase
           .from('stock')
           .select('*')
           .eq('medicine_id', item.medicine_id)
           .eq('batch_number', item.batch_number)
+          .eq('client_id', req.clientId)
           .single();
 
         if (fetchError) {
@@ -124,7 +131,8 @@ router.post('/', async (req, res) => {
           const { error: updateError } = await supabase
             .from('stock')
             .update({ quantity: newQuantity })
-            .eq('id', stockItem.id);
+            .eq('id', stockItem.id)
+            .eq('client_id', req.clientId);
 
           if (updateError) {
             console.error('Stock update error:', updateError);
@@ -149,7 +157,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// GET sales by date range
+// GET sales by date range (filtered by client_id)
 router.get('/date-range/:startDate/:endDate', async (req, res) => {
   try {
     const { startDate, endDate } = req.params;
@@ -157,6 +165,7 @@ router.get('/date-range/:startDate/:endDate', async (req, res) => {
     const { data, error } = await supabase
       .from('sales')
       .select('*')
+      .eq('client_id', req.clientId)
       .gte('sale_date', startDate)
       .lte('sale_date', endDate)
       .order('sale_date', { ascending: false });
@@ -176,15 +185,16 @@ router.get('/date-range/:startDate/:endDate', async (req, res) => {
   }
 });
 
-// GET sales summary/statistics
+// GET sales summary/statistics (filtered by client_id)
 router.get('/stats/summary', async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
 
-    // Today's sales
+    // Today's sales for this client
     const { data: todaySales, error: todayError } = await supabase
       .from('sales')
       .select('final_amount')
+      .eq('client_id', req.clientId)
       .eq('sale_date', today);
 
     if (todayError) throw todayError;
@@ -192,7 +202,7 @@ router.get('/stats/summary', async (req, res) => {
     const todayTotal = todaySales.reduce((sum, sale) => sum + parseFloat(sale.final_amount || 0), 0);
     const todayCount = todaySales.length;
 
-    // This month's sales
+    // This month's sales for this client
     const monthStart = new Date();
     monthStart.setDate(1);
     const monthStartStr = monthStart.toISOString().split('T')[0];
@@ -200,6 +210,7 @@ router.get('/stats/summary', async (req, res) => {
     const { data: monthSales, error: monthError } = await supabase
       .from('sales')
       .select('final_amount')
+      .eq('client_id', req.clientId)
       .gte('sale_date', monthStartStr);
 
     if (monthError) throw monthError;
