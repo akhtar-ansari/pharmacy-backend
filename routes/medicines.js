@@ -1,13 +1,18 @@
 const express = require('express');
 const router = express.Router();
 const { supabase } = require('../config/database');
+const { verifyToken } = require('./auth');
 
-// GET all medicines
+// Apply verifyToken middleware to all routes
+router.use(verifyToken);
+
+// GET all medicines (filtered by client_id)
 router.get('/', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('medicines')
       .select('*')
+      .eq('client_id', req.clientId)
       .order('id', { ascending: true });
 
     if (error) throw error;
@@ -25,13 +30,14 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET single medicine by ID
+// GET single medicine by ID (filtered by client_id)
 router.get('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('medicines')
       .select('*')
       .eq('id', req.params.id)
+      .eq('client_id', req.clientId)
       .single();
 
     if (error) throw error;
@@ -55,12 +61,17 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST create new medicine
+// POST create new medicine (with client_id)
 router.post('/', async (req, res) => {
   try {
+    const medicineData = {
+      ...req.body,
+      client_id: req.clientId
+    };
+
     const { data, error } = await supabase
       .from('medicines')
-      .insert([req.body])
+      .insert([medicineData])
       .select();
 
     if (error) throw error;
@@ -78,13 +89,14 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PUT update medicine
+// PUT update medicine (filtered by client_id)
 router.put('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('medicines')
       .update(req.body)
       .eq('id', req.params.id)
+      .eq('client_id', req.clientId)
       .select();
 
     if (error) throw error;
@@ -109,13 +121,14 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// DELETE medicine
+// DELETE medicine (filtered by client_id)
 router.delete('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('medicines')
       .delete()
       .eq('id', req.params.id)
+      .eq('client_id', req.clientId)
       .select();
 
     if (error) throw error;
@@ -139,7 +152,7 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// SEARCH medicines
+// SEARCH medicines (filtered by client_id)
 router.get('/search/:term', async (req, res) => {
   try {
     const searchTerm = req.params.term;
@@ -147,6 +160,7 @@ router.get('/search/:term', async (req, res) => {
     const { data, error } = await supabase
       .from('medicines')
       .select('*')
+      .eq('client_id', req.clientId)
       .or(`name.ilike.%${searchTerm}%,generic_name.ilike.%${searchTerm}%,company.ilike.%${searchTerm}%,barcode.ilike.%${searchTerm}%`);
 
     if (error) throw error;
