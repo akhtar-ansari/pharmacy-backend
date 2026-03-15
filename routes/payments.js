@@ -1,8 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { supabase } = require('../config/database');
+const { verifyToken } = require('./auth');
 
-// GET all payments
+// Apply verifyToken middleware to all routes
+router.use(verifyToken);
+
+// GET all payments (filtered by client_id)
 router.get('/', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -14,6 +18,7 @@ router.get('/', async (req, res) => {
           contact_person
         )
       `)
+      .eq('client_id', req.clientId)
       .order('id', { ascending: false });
 
     if (error) throw error;
@@ -31,7 +36,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET single payment by ID
+// GET single payment by ID (filtered by client_id)
 router.get('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -45,6 +50,7 @@ router.get('/:id', async (req, res) => {
         )
       `)
       .eq('id', req.params.id)
+      .eq('client_id', req.clientId)
       .single();
 
     if (error) throw error;
@@ -68,12 +74,17 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST create new payment
+// POST create new payment (with client_id)
 router.post('/', async (req, res) => {
   try {
+    const paymentData = {
+      ...req.body,
+      client_id: req.clientId
+    };
+
     const { data, error } = await supabase
       .from('payments')
-      .insert([req.body])
+      .insert([paymentData])
       .select();
 
     if (error) throw error;
@@ -91,13 +102,14 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PUT update payment
+// PUT update payment (filtered by client_id)
 router.put('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('payments')
       .update(req.body)
       .eq('id', req.params.id)
+      .eq('client_id', req.clientId)
       .select();
 
     if (error) throw error;
@@ -122,13 +134,14 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// DELETE payment
+// DELETE payment (filtered by client_id)
 router.delete('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('payments')
       .delete()
       .eq('id', req.params.id)
+      .eq('client_id', req.clientId)
       .select();
 
     if (error) throw error;
@@ -152,7 +165,7 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// GET pending payments
+// GET pending payments (filtered by client_id)
 router.get('/status/pending', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -163,6 +176,7 @@ router.get('/status/pending', async (req, res) => {
           name
         )
       `)
+      .eq('client_id', req.clientId)
       .eq('status', 'pending')
       .order('due_date', { ascending: true });
 
@@ -181,7 +195,7 @@ router.get('/status/pending', async (req, res) => {
   }
 });
 
-// GET overdue payments
+// GET overdue payments (filtered by client_id)
 router.get('/status/overdue', async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
@@ -196,6 +210,7 @@ router.get('/status/overdue', async (req, res) => {
           phone
         )
       `)
+      .eq('client_id', req.clientId)
       .eq('status', 'pending')
       .lt('due_date', today)
       .order('due_date', { ascending: true });
@@ -215,12 +230,13 @@ router.get('/status/overdue', async (req, res) => {
   }
 });
 
-// GET payments by supplier
+// GET payments by supplier (filtered by client_id)
 router.get('/supplier/:supplierId', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('payments')
       .select('*')
+      .eq('client_id', req.clientId)
       .eq('supplier_id', req.params.supplierId)
       .order('due_date', { ascending: false });
 
