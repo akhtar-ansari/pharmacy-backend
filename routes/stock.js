@@ -74,7 +74,7 @@ router.post('/invoices', async (req, res) => {
           batch_number: item.batch_number,
           expiry_date: item.expiry_date,
           purchase_price: item.purchase_price,
-          mrp: 0,
+          mrp: item.mrp || item.purchase_price || 0,
           invoice_id: invoice.id,
           client_id: req.clientId
         });
