@@ -1,10 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { supabase } = require('../config/database');
+const supabase = require('../config/database');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'al_naeima_pharmacy_secret_key_2024_very_secure_random_string';
+const JWT_SECRET = process.env.JWT_SECRET || 'arwa_pharmacy_secret_key_2026';
 
 // ==========================================
 // AUTHENTICATION MIDDLEWARE
@@ -21,10 +20,10 @@ const verifyToken = async (req, res, next) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     
-    // Get user from database
+    // Get user from database (using Attendance table structure)
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, username, email, full_name, role, is_active, client_id')
+      .select('id, username, name, role, status, client_id')
       .eq('id', decoded.userId)
       .single();
 
@@ -32,7 +31,7 @@ const verifyToken = async (req, res, next) => {
       return res.status(401).json({ success: false, error: 'Invalid token' });
     }
 
-    if (!user.is_active) {
+    if (user.status !== 'active') {
       return res.status(403).json({ success: false, error: 'User account is inactive' });
     }
 
@@ -46,7 +45,7 @@ const verifyToken = async (req, res, next) => {
 
 // Check if user is admin
 const isAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin') {
+  if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
     return res.status(403).json({ success: false, error: 'Access denied. Admin only.' });
   }
   next();
@@ -60,20 +59,25 @@ const isAdmin = (req, res, next) => {
 router.post('/login', async (req, res) => {
   const { clientCode, username, password } = req.body;
 
+  console.log('Login attempt:', { clientCode, username });
+
   try {
     // Step 1: Find client by code
     const { data: client, error: clientError } = await supabase
       .from('clients')
-      .select('id, business_name, logo_url, subscription_status, subscription_tier, subscription_end_date, is_active')
+      .select('id, business_name, logo_url, subscription_status, pharmacy_tier, subscription_end_date, is_active, subscribed_apps')
       .eq('client_code', clientCode?.toUpperCase().trim())
       .single();
 
     if (clientError || !client) {
+      console.log('Client not found:', clientCode);
       return res.status(401).json({ 
         success: false, 
         error: 'Invalid client code' 
       });
     }
+
+    console.log('Client found:', client.business_name);
 
     if (!client.is_active) {
       return res.status(403).json({ 
@@ -82,7 +86,28 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Step 2: Check subscription status
+    // Step 2: Check if client has pharmacy app access
+    let apps = [];
+    if (client.subscribed_apps) {
+      if (typeof client.subscribed_apps === 'string') {
+        try {
+          apps = JSON.parse(client.subscribed_apps);
+        } catch (e) {
+          apps = [];
+        }
+      } else if (Array.isArray(client.subscribed_apps)) {
+        apps = client.subscribed_apps;
+      }
+    }
+
+    if (!apps.includes('pharmacy')) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Pharmacy app not enabled for this account. Contact Arwa Enterprises.' 
+      });
+    }
+
+    // Step 3: Check subscription status
     if (client.subscription_status === 'expired') {
       return res.status(403).json({ 
         success: false, 
@@ -100,7 +125,8 @@ router.post('/login', async (req, res) => {
       }
     }
 
-    // Step 3: Find user belonging to this client
+    // Step 4: Find user belonging to this client
+    // Using Attendance table structure: username, password_hash (plain), name, role, status
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('*')
@@ -109,36 +135,45 @@ router.post('/login', async (req, res) => {
       .single();
 
     if (userError || !user) {
+      console.log('User not found:', username, 'for client:', client.id);
       return res.status(401).json({ 
         success: false, 
         error: 'Invalid username or password' 
       });
     }
 
-    if (!user.is_active) {
+    console.log('User found:', user.username);
+
+    if (user.status !== 'active') {
       return res.status(403).json({ 
         success: false, 
         error: 'Account is inactive. Contact administrator.' 
       });
     }
 
-    // Step 4: Verify password
-    const isValidPassword = await bcrypt.compare(password, user.password_hash);
-    
-    if (!isValidPassword) {
+    // Step 5: Verify password (PLAIN TEXT comparison - Attendance style)
+    // password_hash in Attendance table stores plain text password
+    if (user.password_hash !== password) {
+      console.log('Password mismatch');
       return res.status(401).json({ 
         success: false, 
         error: 'Invalid username or password' 
       });
     }
 
-    // Step 5: Update last login
-    await supabase
-      .from('users')
-      .update({ last_login: new Date().toISOString() })
-      .eq('id', user.id);
+    console.log('Password verified');
 
-    // Step 6: Generate JWT token with client info
+    // Step 6: Update last login (if column exists)
+    try {
+      await supabase
+        .from('users')
+        .update({ last_login: new Date().toISOString() })
+        .eq('id', user.id);
+    } catch (e) {
+      // Ignore if last_login column doesn't exist
+    }
+
+    // Step 7: Generate JWT token with client info
     const token = jwt.sign(
       { 
         userId: user.id, 
@@ -154,17 +189,25 @@ router.post('/login', async (req, res) => {
     // Return user and client data
     const { password_hash, ...userData } = user;
 
+    console.log('Login successful for:', user.username);
+
     res.json({
       success: true,
       message: 'Login successful',
       token,
-      user: userData,
+      user: {
+        id: userData.id,
+        username: userData.username,
+        name: userData.name,
+        role: userData.role,
+        status: userData.status
+      },
       client: {
         id: client.id,
         code: clientCode.toUpperCase().trim(),
         name: client.business_name,
         logo: client.logo_url,
-        tier: client.subscription_tier,
+        tier: client.pharmacy_tier || 'basic',
         status: client.subscription_status
       }
     });
@@ -173,7 +216,7 @@ router.post('/login', async (req, res) => {
     console.error('Login error:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Login failed' 
+      error: 'Login failed: ' + error.message 
     });
   }
 });
@@ -195,30 +238,25 @@ router.post('/change-password', verifyToken, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
 
   try {
-    // Get user's current password hash
+    // Get user's current password
     const { data: user } = await supabase
       .from('users')
       .select('password_hash')
       .eq('id', req.user.id)
       .single();
 
-    // Verify current password
-    const isValid = await bcrypt.compare(currentPassword, user.password_hash);
-    
-    if (!isValid) {
+    // Verify current password (plain text comparison)
+    if (user.password_hash !== currentPassword) {
       return res.status(401).json({ 
         success: false, 
         error: 'Current password is incorrect' 
       });
     }
 
-    // Hash new password
-    const newPasswordHash = await bcrypt.hash(newPassword, 10);
-
-    // Update password
+    // Update password (store as plain text - same as Attendance)
     await supabase
       .from('users')
-      .update({ password_hash: newPasswordHash })
+      .update({ password_hash: newPassword })
       .eq('id', req.user.id);
 
     res.json({
@@ -244,7 +282,7 @@ router.get('/', verifyToken, isAdmin, async (req, res) => {
   try {
     const { data: users, error } = await supabase
       .from('users')
-      .select('id, username, email, full_name, role, is_active, phone, created_at, last_login')
+      .select('id, username, name, role, status, created_at')
       .eq('client_id', req.clientId)
       .order('created_at', { ascending: false });
 
@@ -267,13 +305,13 @@ router.get('/', verifyToken, isAdmin, async (req, res) => {
 
 // CREATE NEW USER (with client_id)
 router.post('/', verifyToken, isAdmin, async (req, res) => {
-  const { username, email, password, full_name, role, phone } = req.body;
+  const { username, password, name, role } = req.body;
 
   try {
-    if (!username || !email || !password || !full_name) {
+    if (!username || !password || !name) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Username, email, password, and full name are required' 
+        error: 'Username, password, and name are required' 
       });
     }
 
@@ -284,23 +322,19 @@ router.post('/', verifyToken, isAdmin, async (req, res) => {
       });
     }
 
-    const password_hash = await bcrypt.hash(password, 10);
-
     const insertData = {
       username: username.toLowerCase().trim(),
-      email,
-      password_hash,
-      full_name,
+      password_hash: password,  // Plain text - same as Attendance
+      name,
       role: role || 'pharmacist',
-      phone,
-      is_active: true,
+      status: 'active',
       client_id: req.clientId
     };
 
     const { data, error } = await supabase
       .from('users')
       .insert(insertData)
-      .select('id, username, email, full_name, role, is_active, phone, created_at')
+      .select('id, username, name, role, status, created_at')
       .single();
 
     if (error) throw error;
@@ -323,15 +357,13 @@ router.post('/', verifyToken, isAdmin, async (req, res) => {
 // UPDATE USER
 router.put('/:id', verifyToken, isAdmin, async (req, res) => {
   const { id } = req.params;
-  const { email, full_name, role, phone, is_active } = req.body;
+  const { name, role, status } = req.body;
 
   try {
     const updateData = {
-      email,
-      full_name,
+      name,
       role,
-      phone,
-      is_active
+      status
     };
 
     const { data, error } = await supabase
@@ -339,7 +371,7 @@ router.put('/:id', verifyToken, isAdmin, async (req, res) => {
       .update(updateData)
       .eq('id', id)
       .eq('client_id', req.clientId)
-      .select('id, username, email, full_name, role, is_active, phone')
+      .select('id, username, name, role, status')
       .single();
 
     if (error) throw error;
@@ -365,11 +397,9 @@ router.post('/:id/reset-password', verifyToken, isAdmin, async (req, res) => {
   const { newPassword } = req.body;
 
   try {
-    const password_hash = await bcrypt.hash(newPassword, 10);
-
     await supabase
       .from('users')
-      .update({ password_hash })
+      .update({ password_hash: newPassword })  // Plain text
       .eq('id', id)
       .eq('client_id', req.clientId);
 
