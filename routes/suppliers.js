@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { supabase } = require('../config/database');
+const supabase = require('../config/database');
 const { verifyToken } = require('./auth');
 
 // Apply verifyToken middleware to all routes
